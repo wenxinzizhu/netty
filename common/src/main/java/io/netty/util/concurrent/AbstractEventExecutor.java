@@ -29,6 +29,13 @@ import java.util.concurrent.TimeUnit;
  */
 public abstract class AbstractEventExecutor extends AbstractExecutorService implements EventExecutor {
 
+    /**
+     * Set the current {@link EventExecutor} for the running {@link Thread}.
+     */
+    protected final void setCurrentEventExecutor(EventExecutor executor) {
+        EventExecutors.EXECUTORS.set(executor);
+    }
+
     @Override
     public EventExecutor next() {
         return this;
