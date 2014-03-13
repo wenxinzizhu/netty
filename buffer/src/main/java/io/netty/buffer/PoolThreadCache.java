@@ -30,25 +30,25 @@ final class PoolThreadCache {
     final PoolArena<ByteBuffer> directArena;
 
     // Hold the caches for the different size classes, which are tiny, small and normal.
-    private final PoolChunkCache<byte[]>[] tinySubPageHeapCaches;
-    private final PoolChunkCache<byte[]>[] smallSubPageHeapCaches;
-    private final PoolChunkCache<ByteBuffer>[] tinySubPageDirectCaches;
-    private final PoolChunkCache<ByteBuffer>[] smallSubPageDirectCaches;
-    private final PoolChunkCache<byte[]>[] normalHeapCaches;
-    private final PoolChunkCache<ByteBuffer>[] normalDirectCaches;
+    private final MemoryRegionCache<byte[]>[] tinySubPageHeapCaches;
+    private final MemoryRegionCache<byte[]>[] smallSubPageHeapCaches;
+    private final MemoryRegionCache<ByteBuffer>[] tinySubPageDirectCaches;
+    private final MemoryRegionCache<ByteBuffer>[] smallSubPageDirectCaches;
+    private final MemoryRegionCache<byte[]>[] normalHeapCaches;
+    private final MemoryRegionCache<ByteBuffer>[] normalDirectCaches;
 
     // Used for bitshifting when calculate the index of normal caches later
-    private final int valNormalDirect;
-    private final int valNormalHeap;
+    private final int numShiftsNormalDirect;
+    private final int numShiftsNormalHeap;
 
     // TODO: Test if adding padding helps under contention
     //private long pad0, pad1, pad2, pad3, pad4, pad5, pad6, pad7;
 
     PoolThreadCache(PoolArena<byte[]> heapArena, PoolArena<ByteBuffer> directArena,
                     int tinyCacheSize, int smallCacheSize, int normalCacheSize,
-                    int maxCacheSize, int maxCacheArraySize) {
-        if (maxCacheSize < 0) {
-            throw new IllegalArgumentException("maxCacheSize: " + maxCacheSize + " (expected: >= 0)");
+                    int maxCachedBufferCapacity, int maxCacheArraySize) {
+        if (maxCachedBufferCapacity < 0) {
+            throw new IllegalArgumentException("maxCacheSize: " + maxCachedBufferCapacity + " (expected: >= 0)");
         }
         if (maxCacheArraySize < 0) {
             throw new IllegalArgumentException("maxCacheArraySize: " + maxCacheArraySize + " (expected: >= 0)");
@@ -56,43 +56,43 @@ final class PoolThreadCache {
         this.heapArena = heapArena;
         this.directArena = directArena;
         if (directArena != null) {
-            tinySubPageDirectCaches = createSubPageCaches(tinyCacheSize, directArena.numTinySubpagePools);
+            tinySubPageDirectCaches = createSubPageCaches(tinyCacheSize, PoolArena.numTinySubpagePools);
             smallSubPageDirectCaches = createSubPageCaches(smallCacheSize, directArena.numSmallSubpagePools);
 
-            valNormalDirect = normalCacheIdx(directArena.pageSize);
+            numShiftsNormalDirect = log2(directArena.pageSize);
             normalDirectCaches = createNormalCaches(
-                    normalCacheSize, maxCacheSize, maxCacheArraySize, valNormalDirect, directArena);
+                    normalCacheSize, maxCachedBufferCapacity, maxCacheArraySize, numShiftsNormalDirect, directArena);
         } else {
             // No directArea is configured so just null out all caches
             tinySubPageDirectCaches = null;
             smallSubPageDirectCaches = null;
             normalDirectCaches = null;
-            valNormalDirect = -1;
+            numShiftsNormalDirect = -1;
         }
         if (heapArena != null) {
             // Create the caches for the heap allocations
-            tinySubPageHeapCaches = createSubPageCaches(tinyCacheSize, heapArena.numTinySubpagePools);
+            tinySubPageHeapCaches = createSubPageCaches(tinyCacheSize, PoolArena.numTinySubpagePools);
             smallSubPageHeapCaches = createSubPageCaches(smallCacheSize, heapArena.numSmallSubpagePools);
 
-            valNormalHeap = normalCacheIdx(heapArena.pageSize);
+            numShiftsNormalHeap = log2(heapArena.pageSize);
             normalHeapCaches = createNormalCaches(
-                    normalCacheSize, maxCacheSize, maxCacheArraySize, valNormalHeap, heapArena);
+                    normalCacheSize, maxCachedBufferCapacity, maxCacheArraySize, numShiftsNormalHeap, heapArena);
         } else {
             // No heapArea is configured so just null out all caches
             tinySubPageHeapCaches = null;
             smallSubPageHeapCaches = null;
             normalHeapCaches = null;
-            valNormalHeap = -1;
+            numShiftsNormalHeap = -1;
         }
     }
 
-    private static <T> SubPagePoolChunkCache<T>[] createSubPageCaches(int cacheSize, int numCaches) {
+    private static <T> SubPageMemoryRegionCache<T>[] createSubPageCaches(int cacheSize, int numCaches) {
         if (cacheSize > 0) {
             @SuppressWarnings("unchecked")
-            SubPagePoolChunkCache<T>[] cache = new SubPagePoolChunkCache[numCaches];
+            SubPageMemoryRegionCache<T>[] cache = new SubPageMemoryRegionCache[numCaches];
             for (int i = 0; i < cache.length; i++) {
                 // TODO: maybe use cacheSize / cache.length
-                cache[i] = new SubPagePoolChunkCache<T>(cacheSize);
+                cache[i] = new SubPageMemoryRegionCache<T>(cacheSize);
             }
             return cache;
         } else {
@@ -100,18 +100,18 @@ final class PoolThreadCache {
         }
     }
 
-    private static <T> NormalPoolChunkCache<T>[] createNormalCaches(
+    private static <T> NormalMemoryRegionCache<T>[] createNormalCaches(
             int cacheSize, int maxCacheSize, int maxCacheArraySize, int val, PoolArena<T> area) {
         if (cacheSize > 0) {
             int max = Math.min(area.chunkSize, maxCacheSize);
             int arraySize = Math.min(maxCacheArraySize, max / area.pageSize);
 
             @SuppressWarnings("unchecked")
-            NormalPoolChunkCache<T>[] cache = new NormalPoolChunkCache[arraySize];
+            NormalMemoryRegionCache<T>[] cache = new NormalMemoryRegionCache[arraySize];
             int size = area.pageSize;
             for (int i = 0; i < cache.length; i++) {
-                cache[normalCacheIdx(size) >> val] =
-                        new NormalPoolChunkCache<T>(cacheSize);
+                cache[log2(size) >> val] =
+                        new NormalMemoryRegionCache<T>(cacheSize);
                 size = area.normalizeCapacity(size);
             }
             return cache;
@@ -120,8 +120,7 @@ final class PoolThreadCache {
         }
     }
 
-    // TODO: Find a better name
-    private static int normalCacheIdx(int val) {
+    private static int log2(int val) {
         int res = 0;
         while (val > 1) {
             val >>= 1;
@@ -152,7 +151,7 @@ final class PoolThreadCache {
     }
 
     @SuppressWarnings({ "unchecked", "rawtypes" })
-    private static boolean allocate(PoolChunkCache<?> cache, PooledByteBuf buf, int reqCapacity) {
+    private static boolean allocate(MemoryRegionCache<?> cache, PooledByteBuf buf, int reqCapacity) {
         if (cache == null) {
             // no cache found so just return false here
             return false;
@@ -166,7 +165,7 @@ final class PoolThreadCache {
      */
     @SuppressWarnings({ "unchecked", "rawtypes" })
     boolean add(PoolArena<?> area, PoolChunk chunk, long handle, int normCapacity) {
-        PoolChunkCache<?> cache;
+        MemoryRegionCache<?> cache;
         if (area.isTinyOrSmall(normCapacity)) {
             if (PoolArena.isTiny(normCapacity)) {
                 cache = cacheForTiny(area, normCapacity);
@@ -194,7 +193,7 @@ final class PoolThreadCache {
         free(normalHeapCaches);
     }
 
-    private static void free(PoolChunkCache<?>[] caches) {
+    private static void free(MemoryRegionCache<?>[] caches) {
         if (caches == null) {
             return;
         }
@@ -203,7 +202,7 @@ final class PoolThreadCache {
         }
     }
 
-    private static void free(PoolChunkCache<?> cache) {
+    private static void free(MemoryRegionCache<?> cache) {
         if (cache == null) {
             return;
         }
@@ -219,7 +218,7 @@ final class PoolThreadCache {
         freeUpIfNecessary(normalHeapCaches);
     }
 
-    private static void freeUpIfNecessary(PoolChunkCache<?>[] caches) {
+    private static void freeUpIfNecessary(MemoryRegionCache<?>[] caches) {
         if (caches == null) {
             return;
         }
@@ -228,14 +227,14 @@ final class PoolThreadCache {
         }
     }
 
-    private static void freeUpIfNecessary(PoolChunkCache<?> cache) {
+    private static void freeUpIfNecessary(MemoryRegionCache<?> cache) {
         if (cache == null) {
             return;
         }
         cache.freeUpIfNecessary();
     }
 
-    private PoolChunkCache<?> cacheForTiny(PoolArena<?> area, int normCapacity) {
+    private MemoryRegionCache<?> cacheForTiny(PoolArena<?> area, int normCapacity) {
         int idx = PoolArena.tinyIdx(normCapacity);
         if (area.isDirect()) {
             return cache(tinySubPageDirectCaches, idx);
@@ -243,7 +242,7 @@ final class PoolThreadCache {
         return cache(tinySubPageHeapCaches, idx);
     }
 
-    private PoolChunkCache<?> cacheForSmall(PoolArena<?> area, int normCapacity) {
+    private MemoryRegionCache<?> cacheForSmall(PoolArena<?> area, int normCapacity) {
         int idx = PoolArena.smallIdx(normCapacity);
         if (area.isDirect()) {
             return cache(smallSubPageDirectCaches, idx);
@@ -251,15 +250,16 @@ final class PoolThreadCache {
         return cache(smallSubPageHeapCaches, idx);
     }
 
-    private PoolChunkCache<?> cacheForNormal(PoolArena<?> area, int normCapacity) {
-        int idx = normalCacheIdx(normCapacity >> valNormalDirect);
+    private MemoryRegionCache<?> cacheForNormal(PoolArena<?> area, int normCapacity) {
         if (area.isDirect()) {
+            int idx = log2(normCapacity >> numShiftsNormalDirect);
             return cache(normalDirectCaches, idx);
         }
+        int idx = log2(normCapacity >> numShiftsNormalHeap);
         return cache(normalHeapCaches, idx);
     }
 
-    private static <T> PoolChunkCache<T> cache(PoolChunkCache<T>[] cache, int idx) {
+    private static <T> MemoryRegionCache<T> cache(MemoryRegionCache<T>[] cache, int idx) {
         if (cache == null || idx > cache.length - 1) {
             return null;
         }
@@ -267,12 +267,10 @@ final class PoolThreadCache {
     }
 
     /**
-     * Cache used for buffers which are backed by NORMAL size.
-     *
-     * @param <T>
+     * Cache used for buffers which are backed by TINY or SMALL size.
      */
-    private static final class SubPagePoolChunkCache<T> extends PoolChunkCache<T> {
-        SubPagePoolChunkCache(int size) {
+    private static final class SubPageMemoryRegionCache<T> extends MemoryRegionCache<T> {
+        SubPageMemoryRegionCache(int size) {
             super(size);
         }
 
@@ -284,12 +282,10 @@ final class PoolThreadCache {
     }
 
     /**
-     * Cache used for buffers which are backed by TINY or SMALL size.
-     *
-     * @param <T>
+     * Cache used for buffers which are backed by NORMAL size.
      */
-    private static final class NormalPoolChunkCache<T> extends PoolChunkCache<T> {
-        NormalPoolChunkCache(int size) {
+    private static final class NormalMemoryRegionCache<T> extends MemoryRegionCache<T> {
+        NormalMemoryRegionCache(int size) {
             super(size);
         }
 
@@ -302,10 +298,8 @@ final class PoolThreadCache {
 
     /**
      * Cache of {@link PoolChunk} and handles which can be used to allocate a buffer without locking at all.
-     *
-     * @param <T>
      */
-    private abstract static class PoolChunkCache<T> {
+    private abstract static class MemoryRegionCache<T> {
         private final Entry<T>[] entries;
         private int head;
         private int tail;
@@ -313,7 +307,7 @@ final class PoolThreadCache {
         private long allocations;
 
         @SuppressWarnings("unchecked")
-        PoolChunkCache(int size) {
+        MemoryRegionCache(int size) {
             entries = new Entry[powerOfTwo(size)];
             for (int i = 0; i < entries.length; i++) {
                 entries[i] = new Entry<T>();

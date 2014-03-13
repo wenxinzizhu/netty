@@ -23,6 +23,8 @@ import java.nio.ByteBuffer;
 
 abstract class PoolArena<T> {
 
+    static final int numTinySubpagePools = 512 >>> 4;
+
     final PooledByteBufAllocator parent;
 
     private final int maxOrder;
@@ -30,7 +32,6 @@ abstract class PoolArena<T> {
     final int pageShifts;
     final int chunkSize;
     final int subpageOverflowMask;
-    final int numTinySubpagePools;
     final int numSmallSubpagePools;
     private final PoolSubpage<T>[] tinySubpagePools;
     private final PoolSubpage<T>[] smallSubpagePools;
@@ -52,7 +53,6 @@ abstract class PoolArena<T> {
         this.pageShifts = pageShifts;
         this.chunkSize = chunkSize;
         subpageOverflowMask = ~(pageSize - 1);
-        numTinySubpagePools = 512 >>> 4;
         tinySubpagePools = newSubpagePoolArray(numTinySubpagePools);
         for (int i = 0; i < tinySubpagePools.length; i ++) {
             tinySubpagePools[i] = newSubpagePoolHead(pageSize);
@@ -125,7 +125,6 @@ abstract class PoolArena<T> {
 
     private void allocate(PoolThreadCache cache, PooledByteBuf<T> buf, final int reqCapacity) {
         final int normCapacity = normalizeCapacity(reqCapacity);
-        boolean triedCache = false;
         if (isTinyOrSmall(normCapacity)) { // capacity < pageSize
             int tableIdx;
             PoolSubpage<T>[] table;
@@ -134,7 +133,6 @@ abstract class PoolArena<T> {
                     // was able to allocate out of the cache so move on
                     return;
                 }
-                triedCache = true;
                 tableIdx = tinyIdx(normCapacity);
                 table = tinySubpagePools;
             } else {
@@ -142,7 +140,6 @@ abstract class PoolArena<T> {
                     // was able to allocate out of the cache so move on
                     return;
                 }
-                triedCache = true;
                 tableIdx = smallIdx(normCapacity);
                 table = smallSubpagePools;
             }
@@ -158,18 +155,15 @@ abstract class PoolArena<T> {
                     return;
                 }
             }
-        } else if (normCapacity > chunkSize) {
-            // Huge allocations are never served via the cache so just call allocateHuge
-            allocateHuge(buf, reqCapacity);
-            return;
-        }
-        // Check if the cache was tried before which would be the case if it was a tiny or small allocation request.
-        // In that case there is no need to try again with cached normal allocation.
-        if (!triedCache) {
+        } else if (normCapacity <= chunkSize) {
             if (cache.allocateNormal(this, buf, reqCapacity, normCapacity)) {
                 // was able to allocate out of the cache so move on
                 return;
             }
+        } else {
+            // Huge allocations are never served via the cache so just call allocateHuge
+            allocateHuge(buf, reqCapacity);
+            return;
         }
         allocateNormal(buf, reqCapacity, normCapacity);
     }

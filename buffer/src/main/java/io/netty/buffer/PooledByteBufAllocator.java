@@ -16,17 +16,12 @@
 
 package io.netty.buffer;
 
-import io.netty.util.concurrent.EventExecutor;
-import io.netty.util.concurrent.EventExecutors;
-import io.netty.util.concurrent.Future;
-import io.netty.util.concurrent.FutureListener;
 import io.netty.util.internal.PlatformDependent;
 import io.netty.util.internal.SystemPropertyUtil;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 
 import java.nio.ByteBuffer;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class PooledByteBufAllocator extends AbstractByteBufAllocator {
@@ -42,7 +37,7 @@ public class PooledByteBufAllocator extends AbstractByteBufAllocator {
     private static final int DEFAULT_SMALL_CACHE_SIZE;
     private static final int DEFAULT_NORMAL_CACHE_SIZE;
     private static final int DEFAULT_FREEUP_INTERVAL;
-    private static final int DEFAULT_MAX_CACHE_BUFFER_SIZE;
+    private static final int DEFAULT_MAX_CACHED_BUFFER_CAPACITY;
     private static final int DEFAULT_MAX_CACHE_ARRAY_SIZE;
 
     private static final int MIN_PAGE_SIZE = 4096;
@@ -91,9 +86,10 @@ public class PooledByteBufAllocator extends AbstractByteBufAllocator {
         DEFAULT_SMALL_CACHE_SIZE = SystemPropertyUtil.getInt("io.netty.allocator.smallCacheSize", 256);
         DEFAULT_NORMAL_CACHE_SIZE = SystemPropertyUtil.getInt("io.netty.allocator.normalCacheSize", 64);
 
-        // 32 kb is the maximum of size which is cached. Similar to what is explained in
+        // 32 kb is the default maximum capacity of the cached buffer. Similar to what is explained in
         // 'Scalable memory allocation using jemalloc'
-        DEFAULT_MAX_CACHE_BUFFER_SIZE = SystemPropertyUtil.getInt("io.netty.allocator.maxCacheBufferSize", 32 * 1024);
+        DEFAULT_MAX_CACHED_BUFFER_CAPACITY = SystemPropertyUtil.getInt(
+                "io.netty.allocator.maxCachedBufferCapacity", 32 * 1024);
 
         // Maximal of 4 different size caches of normal allocations
         DEFAULT_MAX_CACHE_ARRAY_SIZE = SystemPropertyUtil.getInt("io.netty.allocator.maxNormalCacheLevels", 4);
@@ -118,7 +114,7 @@ public class PooledByteBufAllocator extends AbstractByteBufAllocator {
             logger.debug("-Dio.netty.allocator.tinyCacheSize: {}", DEFAULT_TINY_CACHE_SIZE);
             logger.debug("-Dio.netty.allocator.smallCacheSize: {}", DEFAULT_SMALL_CACHE_SIZE);
             logger.debug("-Dio.netty.allocator.normalCacheSize: {}", DEFAULT_NORMAL_CACHE_SIZE);
-            logger.debug("-Dio.netty.allocator.maxCacheBufferSize: {}", DEFAULT_MAX_CACHE_BUFFER_SIZE);
+            logger.debug("-Dio.netty.allocator.maxCachedBufferCapacity: {}", DEFAULT_MAX_CACHED_BUFFER_CAPACITY);
             logger.debug("-Dio.netty.allocator.maxNormalCacheLevels: {}", DEFAULT_MAX_CACHE_ARRAY_SIZE);
             logger.debug("-Dio.netty.allocator.freeUpCacheInterval: {}s", DEFAULT_FREEUP_INTERVAL);
         }
@@ -153,40 +149,12 @@ public class PooledByteBufAllocator extends AbstractByteBufAllocator {
             } else {
                 directArena = null;
             }
-            EventExecutor executor = EventExecutors.current();
-            if (executor != null) {
-                // If the current Thread is assigned to an EventExecutor we can
-                // easily free the cached stuff again once the EventExecutor completes later.
-                final PoolThreadCache cache = new PoolThreadCache(
-                        heapArena, directArena, tinyCacheSize, smallCacheSize, normalCacheSize,
-                        DEFAULT_MAX_CACHE_BUFFER_SIZE, DEFAULT_MAX_CACHE_ARRAY_SIZE);
-
-                // Free up cached resources when executor is terminated
-                executor.terminationFuture().addListener(new FutureListener<Object>() {
-                    @Override
-                    public void operationComplete(Future<Object> future) throws Exception {
-                        cache.free();
-                    }
-                });
-
-                // Schedule task which will free up resources out of the cache when not needed
-                // TODO: Do we need to make the interval also configurable via constructor?
-                executor.scheduleWithFixedDelay(new Runnable() {
-                    @Override
-                    public void run() {
-                        cache.freeUpIfNecessary();
-                    }
-                }, DEFAULT_FREEUP_INTERVAL , DEFAULT_FREEUP_INTERVAL, TimeUnit.SECONDS);
-                return cache;
-            } else {
-                // TODO: Maybe handle this with a ReferenceQueue and PhantomReferences and also cache for
-                //       Threads that are not used for an EventExecutor. This will need an extra Thread
-                //       and I'm not sure yet if we really need this. Mainly all the allocations of ByteBuf
-                //       are done out of the EventExecutor / EventLoop anyway. The only thing I can think of that
-                //       would need this is when the PooledByteBufAllocator is used outside of netty itself.
-                //       Not sure if this worth the extra overhead.
-                return new PoolThreadCache(heapArena, directArena, 0, 0, 0, 0, 0);
-            }
+            // If the current Thread is assigned to an EventExecutor we can
+            // easily free the cached stuff again once the EventExecutor completes later.
+            final PoolThreadCache cache = new PoolThreadCache(
+                    heapArena, directArena, tinyCacheSize, smallCacheSize, normalCacheSize,
+                    DEFAULT_MAX_CACHED_BUFFER_CAPACITY, DEFAULT_MAX_CACHE_ARRAY_SIZE);
+            return cache;
         }
     };
 

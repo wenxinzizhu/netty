@@ -95,9 +95,6 @@ public abstract class SingleThreadEventExecutor extends AbstractEventExecutor {
         thread = threadFactory.newThread(new Runnable() {
             @Override
             public void run() {
-                // set the EventExecutor for the running Thread
-                setCurrentEventExecutor(SingleThreadEventExecutor.this);
-
                 boolean success = false;
                 updateLastExecutionTime();
                 try {
