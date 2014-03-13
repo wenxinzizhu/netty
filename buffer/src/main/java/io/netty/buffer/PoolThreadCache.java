@@ -41,6 +41,9 @@ final class PoolThreadCache {
     private final int numShiftsNormalDirect;
     private final int numShiftsNormalHeap;
 
+    private int allocations;
+    private static final int FREE_SWEEP_ALLOCATION_THRESHOLD = 8129;
+
     // TODO: Test if adding padding helps under contention
     //private long pad0, pad1, pad2, pad3, pad4, pad5, pad6, pad7;
 
@@ -151,10 +154,14 @@ final class PoolThreadCache {
     }
 
     @SuppressWarnings({ "unchecked", "rawtypes" })
-    private static boolean allocate(MemoryRegionCache<?> cache, PooledByteBuf buf, int reqCapacity) {
+    private boolean allocate(MemoryRegionCache<?> cache, PooledByteBuf buf, int reqCapacity) {
         if (cache == null) {
             // no cache found so just return false here
             return false;
+        }
+        if (++allocations >= FREE_SWEEP_ALLOCATION_THRESHOLD) {
+            allocations = 0;
+            freeUpIfNecessary();
         }
         return cache.allocate(buf, reqCapacity);
     }
@@ -303,8 +310,8 @@ final class PoolThreadCache {
         private final Entry<T>[] entries;
         private int head;
         private int tail;
-        // Holds the number of allocations since the last freeUpIfNecessary() or free() call.
-        private long allocations;
+        private int maxEntriesInUse;
+        private int entriesInUse;
 
         @SuppressWarnings("unchecked")
         MemoryRegionCache(int size) {
@@ -343,6 +350,8 @@ final class PoolThreadCache {
                 // cache is full
                 return false;
             }
+            entriesInUse --;
+
             entry.chunk = chunk;
             entry.handle = handle;
             tail = nextIdx(tail);
@@ -357,7 +366,10 @@ final class PoolThreadCache {
             if (entry.chunk == null) {
                 return false;
             }
-            allocations++;
+            entriesInUse++;
+            if (maxEntriesInUse < entriesInUse) {
+                maxEntriesInUse = entriesInUse;
+            }
             initBuf(entry.chunk, entry.handle, buf, reqCapacity);
             // only null out the chunk as we only use the chunk to check if the buffer is full or not.
             entry.chunk = null;
@@ -369,7 +381,8 @@ final class PoolThreadCache {
          * Clear out this cache and free up all previous cached {@link PoolChunk}s and {@code handle}s.
          */
         public void free() {
-            allocations = 0;
+            entriesInUse = 0;
+            maxEntriesInUse = 0;
             for (int i = head;; i = nextIdx(i)) {
                 if (!freeEntry(entries[i])) {
                     // all cleared
@@ -381,19 +394,18 @@ final class PoolThreadCache {
         /**
          * Free up cached {@link PoolChunk}s if not allocated frequently enough.
          */
-        public void freeUpIfNecessary() {
-            long allocs = allocations;
-            allocations = 0;
-
-            // free up all cached buffers until it match the allocation count over the last perioid
-            if (allocs < size()) {
-                for (int i = head; allocs > 0; i = nextIdx(i)) {
-                    if (!freeEntry(entries[i])) {
-                        // all freed
-                        return;
-                    }
-                    allocs--;
+        private void freeUpIfNecessary() {
+            int free = size() - maxEntriesInUse;
+            if (free <= 0) {
+                return;
+            }
+            int i = head;
+            for (; free > 0; free--) {
+                if (!freeEntry(entries[i])) {
+                    // all freed
+                    return;
                 }
+                i = nextIdx(i);
             }
         }
 

@@ -269,10 +269,17 @@ public class PooledByteBufAllocator extends AbstractByteBufAllocator {
         return directArenas != null;
     }
 
+    /**
+     * Returns {@code true} if the calling {@link Thread} has a {@link ThreadLocal} cache for the allocated
+     * buffers.
+     */
     public boolean hasThreadLocalCache() {
         return threadCache.exists();
     }
 
+    /**
+     * Free all cached buffers for the calling {@link Thread}.
+     */
     public void freeThreadLocalCache() {
         threadCache.free();
     }
