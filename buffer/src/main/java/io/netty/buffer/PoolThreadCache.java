@@ -64,7 +64,7 @@ final class PoolThreadCache {
 
             numShiftsNormalDirect = log2(directArena.pageSize);
             normalDirectCaches = createNormalCaches(
-                    normalCacheSize, maxCachedBufferCapacity, maxCacheArraySize, numShiftsNormalDirect, directArena);
+                    normalCacheSize, maxCachedBufferCapacity, maxCacheArraySize, directArena);
         } else {
             // No directArea is configured so just null out all caches
             tinySubPageDirectCaches = null;
@@ -79,7 +79,7 @@ final class PoolThreadCache {
 
             numShiftsNormalHeap = log2(heapArena.pageSize);
             normalHeapCaches = createNormalCaches(
-                    normalCacheSize, maxCachedBufferCapacity, maxCacheArraySize, numShiftsNormalHeap, heapArena);
+                    normalCacheSize, maxCachedBufferCapacity, maxCacheArraySize, heapArena);
         } else {
             // No heapArea is configured so just null out all caches
             tinySubPageHeapCaches = null;
@@ -104,7 +104,7 @@ final class PoolThreadCache {
     }
 
     private static <T> NormalMemoryRegionCache<T>[] createNormalCaches(
-            int cacheSize, int maxCacheSize, int maxCacheArraySize, int val, PoolArena<T> area) {
+            int cacheSize, int maxCacheSize, int maxCacheArraySize, PoolArena<T> area) {
         if (cacheSize > 0) {
             int max = Math.min(area.chunkSize, maxCacheSize);
             int arraySize = Math.min(maxCacheArraySize, max / area.pageSize);
@@ -308,6 +308,7 @@ final class PoolThreadCache {
      */
     private abstract static class MemoryRegionCache<T> {
         private final Entry<T>[] entries;
+        private final int maxUnusedCached;
         private int head;
         private int tail;
         private int maxEntriesInUse;
@@ -319,6 +320,7 @@ final class PoolThreadCache {
             for (int i = 0; i < entries.length; i++) {
                 entries[i] = new Entry<T>();
             }
+            maxUnusedCached = size / 2;
         }
 
         private static int powerOfTwo(int res) {
@@ -366,6 +368,7 @@ final class PoolThreadCache {
             if (entry.chunk == null) {
                 return false;
             }
+
             entriesInUse++;
             if (maxEntriesInUse < entriesInUse) {
                 maxEntriesInUse = entriesInUse;
@@ -396,7 +399,8 @@ final class PoolThreadCache {
          */
         private void freeUpIfNecessary() {
             int free = size() - maxEntriesInUse;
-            if (free <= 0) {
+
+            if (free <= maxUnusedCached) {
                 return;
             }
             entriesInUse = 0;
