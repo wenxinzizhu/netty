@@ -399,6 +399,7 @@ final class PoolThreadCache {
             if (free <= 0) {
                 return;
             }
+            maxEntriesInUse = entriesInUse;
             int i = head;
             for (; free > 0; free--) {
                 if (!freeEntry(entries[i])) {
