@@ -129,34 +129,7 @@ public class PooledByteBufAllocator extends AbstractByteBufAllocator {
     private final int smallCacheSize;
     private final int normalCacheSize;
 
-    final ThreadLocal<PoolThreadCache> threadCache = new ThreadLocal<PoolThreadCache>() {
-
-        private final AtomicInteger index = new AtomicInteger();
-        @Override
-        protected PoolThreadCache initialValue() {
-            final int idx = index.getAndIncrement();
-            final PoolArena<byte[]> heapArena;
-            final PoolArena<ByteBuffer> directArena;
-
-            if (heapArenas != null) {
-                heapArena = heapArenas[Math.abs(idx % heapArenas.length)];
-            } else {
-                heapArena = null;
-            }
-
-            if (directArenas != null) {
-                directArena = directArenas[Math.abs(idx % directArenas.length)];
-            } else {
-                directArena = null;
-            }
-            // If the current Thread is assigned to an EventExecutor we can
-            // easily free the cached stuff again once the EventExecutor completes later.
-            final PoolThreadCache cache = new PoolThreadCache(
-                    heapArena, directArena, tinyCacheSize, smallCacheSize, normalCacheSize,
-                    DEFAULT_MAX_CACHED_BUFFER_CAPACITY, DEFAULT_MAX_CACHE_ARRAY_SIZE);
-            return cache;
-        }
-    };
+    final PoolThreadLocalCache threadCache = new PoolThreadLocalCache();
 
     public PooledByteBufAllocator() {
         this(false);
@@ -294,6 +267,66 @@ public class PooledByteBufAllocator extends AbstractByteBufAllocator {
     @Override
     public boolean isDirectBufferPooled() {
         return directArenas != null;
+    }
+
+    public boolean hasThreadLocalCache() {
+        return threadCache.exists();
+    }
+
+    public void freeThreadLocalCache() {
+        threadCache.free();
+    }
+
+    final class PoolThreadLocalCache extends ThreadLocal<PoolThreadCache> {
+
+        private final AtomicInteger index = new AtomicInteger();
+
+        @Override
+        public PoolThreadCache get() {
+            PoolThreadCache cache = super.get();
+            if (cache == null) {
+                final int idx = index.getAndIncrement();
+                final PoolArena<byte[]> heapArena;
+                final PoolArena<ByteBuffer> directArena;
+
+                if (heapArenas != null) {
+                    heapArena = heapArenas[Math.abs(idx % heapArenas.length)];
+                } else {
+                    heapArena = null;
+                }
+
+                if (directArenas != null) {
+                    directArena = directArenas[Math.abs(idx % directArenas.length)];
+                } else {
+                    directArena = null;
+                }
+                // If the current Thread is assigned to an EventExecutor we can
+                // easily free the cached stuff again once the EventExecutor completes later.
+                cache = new PoolThreadCache(
+                        heapArena, directArena, tinyCacheSize, smallCacheSize, normalCacheSize,
+                        DEFAULT_MAX_CACHED_BUFFER_CAPACITY, DEFAULT_MAX_CACHE_ARRAY_SIZE);
+                set(cache);
+            }
+            return cache;
+        }
+
+        /**
+         * Returns {@code true} if the current {@link Thread} has a {@link ThreadLocal} cache for the allocated
+         * buffers.
+         */
+        public boolean exists() {
+            return super.get() != null;
+        }
+
+        /**
+         * Free all cached buffers for the {@link Thread}.
+         */
+        public void free() {
+            PoolThreadCache cache = super.get();
+            if (cache != null) {
+                cache.free();
+            }
+        }
     }
 
 //    Too noisy at the moment.
