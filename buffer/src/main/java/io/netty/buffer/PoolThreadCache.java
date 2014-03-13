@@ -113,7 +113,7 @@ final class PoolThreadCache {
             NormalMemoryRegionCache<T>[] cache = new NormalMemoryRegionCache[arraySize];
             int size = area.pageSize;
             for (int i = 0; i < cache.length; i++) {
-                cache[log2(size) >> val] =
+                cache[i] =
                         new NormalMemoryRegionCache<T>(cacheSize);
                 size = area.normalizeCapacity(size);
             }
