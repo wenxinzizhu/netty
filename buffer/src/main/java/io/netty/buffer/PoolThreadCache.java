@@ -42,19 +42,17 @@ final class PoolThreadCache {
     private final int numShiftsNormalHeap;
 
     private int allocations;
-    private static final int FREE_SWEEP_ALLOCATION_THRESHOLD = 8129;
+    private static final int FREE_SWEEP_ALLOCATION_THRESHOLD = 8192;
 
     // TODO: Test if adding padding helps under contention
     //private long pad0, pad1, pad2, pad3, pad4, pad5, pad6, pad7;
 
     PoolThreadCache(PoolArena<byte[]> heapArena, PoolArena<ByteBuffer> directArena,
                     int tinyCacheSize, int smallCacheSize, int normalCacheSize,
-                    int maxCachedBufferCapacity, int maxCacheArraySize) {
+                    int maxCachedBufferCapacity) {
         if (maxCachedBufferCapacity < 0) {
-            throw new IllegalArgumentException("maxCacheSize: " + maxCachedBufferCapacity + " (expected: >= 0)");
-        }
-        if (maxCacheArraySize < 0) {
-            throw new IllegalArgumentException("maxCacheArraySize: " + maxCacheArraySize + " (expected: >= 0)");
+            throw new IllegalArgumentException("maxCachedBufferCapacity: "
+                    + maxCachedBufferCapacity + " (expected: >= 0)");
         }
         this.heapArena = heapArena;
         this.directArena = directArena;
@@ -64,7 +62,7 @@ final class PoolThreadCache {
 
             numShiftsNormalDirect = log2(directArena.pageSize);
             normalDirectCaches = createNormalCaches(
-                    normalCacheSize, maxCachedBufferCapacity, maxCacheArraySize, directArena);
+                    normalCacheSize, maxCachedBufferCapacity, directArena);
         } else {
             // No directArea is configured so just null out all caches
             tinySubPageDirectCaches = null;
@@ -79,7 +77,7 @@ final class PoolThreadCache {
 
             numShiftsNormalHeap = log2(heapArena.pageSize);
             normalHeapCaches = createNormalCaches(
-                    normalCacheSize, maxCachedBufferCapacity, maxCacheArraySize, heapArena);
+                    normalCacheSize, maxCachedBufferCapacity, heapArena);
         } else {
             // No heapArea is configured so just null out all caches
             tinySubPageHeapCaches = null;
@@ -104,18 +102,15 @@ final class PoolThreadCache {
     }
 
     private static <T> NormalMemoryRegionCache<T>[] createNormalCaches(
-            int cacheSize, int maxCacheSize, int maxCacheArraySize, PoolArena<T> area) {
+            int cacheSize, int maxCachedBufferCapacity, PoolArena<T> area) {
         if (cacheSize > 0) {
-            int max = Math.min(area.chunkSize, maxCacheSize);
-            int arraySize = Math.min(maxCacheArraySize, max / area.pageSize);
+            int max = Math.min(area.chunkSize, maxCachedBufferCapacity);
+            int arraySize = max / area.pageSize;
 
             @SuppressWarnings("unchecked")
             NormalMemoryRegionCache<T>[] cache = new NormalMemoryRegionCache[arraySize];
-            int size = area.pageSize;
             for (int i = 0; i < cache.length; i++) {
-                cache[i] =
-                        new NormalMemoryRegionCache<T>(cacheSize);
-                size = area.normalizeCapacity(size);
+                cache[i] = new NormalMemoryRegionCache<T>(cacheSize);
             }
             return cache;
         } else {
@@ -159,11 +154,12 @@ final class PoolThreadCache {
             // no cache found so just return false here
             return false;
         }
-        if (++allocations >= FREE_SWEEP_ALLOCATION_THRESHOLD) {
+        boolean allocated = cache.allocate(buf, reqCapacity);
+        if (++ allocations >= FREE_SWEEP_ALLOCATION_THRESHOLD) {
             allocations = 0;
             freeUpIfNecessary();
         }
-        return cache.allocate(buf, reqCapacity);
+        return allocated;
     }
 
     /**
@@ -369,7 +365,7 @@ final class PoolThreadCache {
                 return false;
             }
 
-            entriesInUse++;
+            entriesInUse ++;
             if (maxEntriesInUse < entriesInUse) {
                 maxEntriesInUse = entriesInUse;
             }

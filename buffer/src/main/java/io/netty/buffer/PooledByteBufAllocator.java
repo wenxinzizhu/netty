@@ -36,9 +36,7 @@ public class PooledByteBufAllocator extends AbstractByteBufAllocator {
     private static final int DEFAULT_TINY_CACHE_SIZE;
     private static final int DEFAULT_SMALL_CACHE_SIZE;
     private static final int DEFAULT_NORMAL_CACHE_SIZE;
-    private static final int DEFAULT_FREEUP_INTERVAL;
     private static final int DEFAULT_MAX_CACHED_BUFFER_CAPACITY;
-    private static final int DEFAULT_MAX_CACHE_ARRAY_SIZE;
 
     private static final int MIN_PAGE_SIZE = 4096;
     private static final int MAX_CHUNK_SIZE = (int) (((long) Integer.MAX_VALUE + 1) / 2);
@@ -91,12 +89,6 @@ public class PooledByteBufAllocator extends AbstractByteBufAllocator {
         DEFAULT_MAX_CACHED_BUFFER_CAPACITY = SystemPropertyUtil.getInt(
                 "io.netty.allocator.maxCachedBufferCapacity", 32 * 1024);
 
-        // Maximal of 4 different size caches of normal allocations
-        DEFAULT_MAX_CACHE_ARRAY_SIZE = SystemPropertyUtil.getInt("io.netty.allocator.maxNormalCacheLevels", 4);
-
-        // interval in which cached buffers are freed up if not used frequently (in seconds)
-        DEFAULT_FREEUP_INTERVAL = SystemPropertyUtil.getInt("io.netty.allocator.freeUpCacheInterval", 10);
-
         if (logger.isDebugEnabled()) {
             logger.debug("-Dio.netty.allocator.numHeapArenas: {}", DEFAULT_NUM_HEAP_ARENA);
             logger.debug("-Dio.netty.allocator.numDirectArenas: {}", DEFAULT_NUM_DIRECT_ARENA);
@@ -115,8 +107,6 @@ public class PooledByteBufAllocator extends AbstractByteBufAllocator {
             logger.debug("-Dio.netty.allocator.smallCacheSize: {}", DEFAULT_SMALL_CACHE_SIZE);
             logger.debug("-Dio.netty.allocator.normalCacheSize: {}", DEFAULT_NORMAL_CACHE_SIZE);
             logger.debug("-Dio.netty.allocator.maxCachedBufferCapacity: {}", DEFAULT_MAX_CACHED_BUFFER_CAPACITY);
-            logger.debug("-Dio.netty.allocator.maxNormalCacheLevels: {}", DEFAULT_MAX_CACHE_ARRAY_SIZE);
-            logger.debug("-Dio.netty.allocator.freeUpCacheInterval: {}s", DEFAULT_FREEUP_INTERVAL);
         }
     }
 
@@ -311,7 +301,7 @@ public class PooledByteBufAllocator extends AbstractByteBufAllocator {
                 // easily free the cached stuff again once the EventExecutor completes later.
                 cache = new PoolThreadCache(
                         heapArena, directArena, tinyCacheSize, smallCacheSize, normalCacheSize,
-                        DEFAULT_MAX_CACHED_BUFFER_CAPACITY, DEFAULT_MAX_CACHE_ARRAY_SIZE);
+                        DEFAULT_MAX_CACHED_BUFFER_CAPACITY);
                 set(cache);
             }
             return cache;
